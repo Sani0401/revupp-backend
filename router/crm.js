@@ -1,5 +1,6 @@
 import express from "express";
 import getAllProperties from "../services/crm/Hubspot/contact/get-all-properties.js";
+import getCreatedLead from "../services/crm/Hubspot/webhook/get-created-lead.js";
 const crmRouter = express.Router();
 
 crmRouter.get("/", (req, res) => {
@@ -10,6 +11,7 @@ crmRouter.get("/", (req, res) => {
 crmRouter.post("/hubspot/webhook/get-created-lead", async (req, res) => {
     try {
         console.log("Webhook triggered");
+        await getCreatedLead(req, res);
         console.log("Request body:", req.body);
         res.status(200).json({ message: "Webhook received" });
     } catch (error) {

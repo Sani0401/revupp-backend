@@ -12,4 +12,5 @@ coreRouter.post("/verify-lead", async(req, res) => {
     res.status(200).json({ message: "test route works!", data: response });
 });
 
+
 export default coreRouter;

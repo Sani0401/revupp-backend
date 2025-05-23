@@ -34,7 +34,7 @@ router.get('/oauth2callback', async (req, res) => {
         const tokenData = tokenRes?.data;
         const refresh_token = tokenData?.refresh_token;
         const access_token = tokenData?.access_token;
-        const {data, error} = await supabase.from('enterprise_user_oauth_token').insert({refresh_token: refresh_token, access_token: access_token, use_id: userId})
+        const {data, error} = await supabase.from('enterprise_user_oauth_token').insert({refresh_token: refresh_token, access_token: access_token, user_id: userId})
         if( error){
             console.log("Error storing gmail token: ", error);
         }

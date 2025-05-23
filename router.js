@@ -38,7 +38,7 @@ router.get('/oauth2callback', async (req, res) => {
         if( error){
             console.log("Error storing gmail token: ", error);
         }
-        return res.redirect(`${process.env.fronFRONTEND_URL}/settings`);
+        return res.redirect(`${process.env.FRONTEND_URL}/settings`);
     } catch (err) {
         res.status(500).json({ error: 'Token exchange failed', details: err.response.data });
     }

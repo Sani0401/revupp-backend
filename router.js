@@ -13,7 +13,9 @@ router.use("/core", coreRouter);
 router.get('/oauth2callback', async (req, res) => {
    
     const code = req.query.code;
-
+    const userId = req.query.state;
+    console.log('This is the user giving acces to gmail: ', userId);
+    
     // Exchange code for tokens
     const params = new URLSearchParams();
     params.append('code', code);

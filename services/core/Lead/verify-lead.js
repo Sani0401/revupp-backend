@@ -23,13 +23,15 @@ const verifylead = async (data) => {
         const prompt = `Evaluate the following lead data based on the qualification configuration:\n\n` +
             `Qualification Configuration: these are the requirements ${JSON.stringify(qualification_config)}\n\n` +
             `Lead Data: ${JSON.stringify(custom_lead_data)}\n\n` +
-            `Provide a detailed evaluation and whether the lead qualifies or not.`;
+            `Provide a detailed evaluation and whether the lead qualifies or not. eply in QUALIFIED or UNQUALIFIED only`;
 
-        const response = await client.responses.create({
-            model: "gpt-4.1-nano",
-            instructions: "You are an expert lead evaluator. reply in QUALIFIED or UNQUALIFIED only",
-            input: prompt
-        });
+        // const response = await client.responses.create({
+        //     model: "gpt-4.1-nano",
+        //     instructions: "You are an expert lead evaluator. reply in QUALIFIED or UNQUALIFIED only",
+        //     input: prompt
+        // });
+
+        const response = {output_text:'UNQUALIFIED' }
 
         const evaluation = response?.output_text;
         console.log("Updating status for ID:", id, "with evaluation:", evaluation);
@@ -37,11 +39,11 @@ const verifylead = async (data) => {
         // Fetch AE assignment config
         const { data: aeData, error: aeError } = await supabase
             .from("enterprise_assignment_config")
-            .select("ae_list")
+            .select("config")
             .eq("enterprise_id", enterprise_id)
             .single();
 
-        if (aeError || !aeData?.ae_list?.length) {
+        if (aeError || !aeData?.config?.ae_ids?.length) {
             throw new Error("No AE list found for assignment");
         }
 
@@ -52,7 +54,7 @@ const verifylead = async (data) => {
             .eq("enterprise_id", enterprise_id)
             .single();
 
-        const aeList = aeData.ae_list;
+        const aeList = aeData?.config?.ae_ids;
         let currentIndex = trackerData ? aeList.findIndex(ae => ae === trackerData.last_assigned_ae_id) : -1;
         const nextIndex = (currentIndex + 1) % aeList.length;
         const assignedAeId = aeList[nextIndex];
@@ -68,9 +70,9 @@ const verifylead = async (data) => {
 
         // Get AE email from user table
         const { data: aeUser, error: aeUserError } = await supabase
-            .from("users")
+            .from("users_details")
             .select("email")
-            .eq("id", assignedAeId)
+            .eq("user_id", assignedAeId)
             .single();
 
         const aeEmail = aeUser?.email;
@@ -93,7 +95,7 @@ const verifylead = async (data) => {
             headers: { Authorization: `Bearer ${HUBSPOT_API_KEY}` },
         });
 
-        const owner = ownerResp.data.find(o => o.email === aeEmail);
+        const owner = ownerResp.data?.results?.find(o => o.email === aeEmail);
         if (!owner) throw new Error("HubSpot owner not found");
 
         const contactSearch = await axios.post(`https://api.hubapi.com/crm/v3/objects/contacts/search`, {

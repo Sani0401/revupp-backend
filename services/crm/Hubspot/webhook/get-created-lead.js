@@ -1,132 +1,145 @@
 import supabase from "../../../../config/supabase.js";
+import client from "../../../../config/openai.js";
 import axios from "axios";
 
 const getCreatedLead = async (req, res) => {
     try {
-        console.log("Webhook payload:", req.body);
-
         const request = req.body;
         const objectId = request[0]?.objectId;
+        if (!objectId) return res.status(400).json({ error: "Invalid objectId" });
 
-        if (!objectId) {
-            res.status(400).json({ error: "Invalid objectId: objectId is undefined or null" });
-            return; // Ensure no further code is executed
-        }
-
-        // Fetch enterprise_id and hubspot_owner_id from HubSpot
-        const url = `https://api.hubapi.com/crm/v3/objects/contacts/${objectId}?properties=enterprise_id,hubspot_owner_id`;
-        console.log("HubSpot API URL:", url);
-
-        const response = await fetch(url, {
-            method: "GET",
-            headers: { "Authorization": `Bearer ${process.env.HUBSPOT_API_KEY}` },
+        // Step 1: Fetch contact from HubSpot
+        const contactUrl = `https://api.hubapi.com/crm/v3/objects/contacts/${objectId}?properties=enterprise_id,hubspot_owner_id`;
+        const contactRes = await axios.get(contactUrl, {
+            headers: { Authorization: `Bearer ${process.env.HUBSPOT_API_KEY}` },
         });
+        const contact = contactRes.data;
+        const enterprise_id = contact?.properties?.enterprise_id;
+        const hubspot_owner_id = contact?.properties?.hubspot_owner_id;
 
-        if (!response.ok) {
-            const errorDetails = await response.text();
-            console.error("Error fetching lead:", errorDetails);
-            res.status(response.status).json({ error: "Error fetching lead", details: errorDetails });
-            return; // Ensure no further code is executed
-        }
+        // Step 2: Get owner's user_id from Supabase
+        const ownerUrl = `https://api.hubapi.com/crm/v3/owners/${hubspot_owner_id}`;
+        const ownerRes = await axios.get(ownerUrl, {
+            headers: { Authorization: `Bearer ${process.env.HUBSPOT_API_KEY}` },
+        });
+        const owner_email = ownerRes?.data?.email;
 
-        const lead = await response.json();
-        const enterprise_id = lead?.properties?.enterprise_id;
-        const hubspot_owner_id = lead?.properties?.hubspot_owner_id;
+        const { data: ownerUser, error: ownerError } = await supabase
+            .from("users_details")
+            .select("user_id")
+            .eq("email", owner_email);
 
-        if (!hubspot_owner_id) {
-            res.status(400).json({ error: "Invalid hubspot_owner_id: hubspot_owner_id is undefined or null" });
-            return; // Ensure no further code is executed
-        }
+        if (ownerError || ownerUser.length === 0) throw new Error("Owner not found in DB");
+        const owner_id = ownerUser[0].user_id;
 
-        // Fetch owner details
-        const ownerURL = `https://api.hubapi.com/crm/v3/owners/${hubspot_owner_id}`;
-        console.log("Owner URL:", ownerURL);
-
-        let owner_id;
-        try {
-            const ownerResponse = await axios.get(ownerURL, {
-                headers: { "Authorization": `Bearer ${process.env.HUBSPOT_API_KEY}` },
-            });
-            const owner_email = ownerResponse?.data?.email;
-
-            const { data, error } = await supabase
-                .from("users_details")
-                .select("user_id")
-                .eq("email", owner_email);
-
-            if (error) {
-                console.error("Error fetching owner data:", error);
-                res.status(500).json({ error: "Error fetching owner data", details: error.message });
-                return; // Ensure no further code is executed
-            }
-
-            owner_id = data[0]?.user_id;
-        } catch (error) {
-            console.error("Error fetching owner details:", error.message);
-            res.status(500).json({ error: "Error fetching owner details", details: error.message });
-            return; // Ensure no further code is executed
-        }
-
-        // Fetch selected fields for the enterprise
-        const { data: selectedFieldsData, error: selectedFieldsError } = await supabase
+        // Step 3: Fetch selected fields for enterprise
+        const { data: selectedFieldsData } = await supabase
             .from("enterprise_lead_config")
             .select("selected_fields")
             .eq("enterprise_id", enterprise_id);
-
-        if (selectedFieldsError) {
-            console.error("Error fetching selected fields:", selectedFieldsError);
-            res.status(500).json({ error: "Error fetching selected fields", details: selectedFieldsError.message });
-            return; // Ensure no further code is executed
-        }
-
-        if (selectedFieldsData.length === 0) {
-            res.status(404).json({ error: "No selected fields found for the given enterprise ID" });
-            return; // Ensure no further code is executed
-        }
-
         const selectedFields = JSON.parse(selectedFieldsData[0].selected_fields)
             .filter((field) => field.selected)
             .map((field) => field.name);
 
-        console.log("Selected fields:", selectedFields);
+        // Step 4: Fetch field values
+        const fieldsUrl = `https://api.hubapi.com/crm/v3/objects/contacts/${objectId}?properties=${selectedFields.join(",")}`;
+        const fieldDataRes = await axios.get(fieldsUrl, {
+            headers: { Authorization: `Bearer ${process.env.HUBSPOT_API_KEY}` },
+        });
+        const leadFields = fieldDataRes.data.properties;
 
-        // Fetch data for the selected fields from HubSpot
-        const fieldUrl = `https://api.hubapi.com/crm/v3/objects/contacts/${objectId}?properties=${selectedFields.join(",")}`;
-        const fieldResponse = await fetch(fieldUrl, {
-            method: "GET",
-            headers: { "Authorization": `Bearer ${process.env.HUBSPOT_API_KEY}` },
+        // Step 5: Qualification check using OpenAI
+        const { data: qualificationData } = await supabase
+            .from("enterprise_lead_qualification_config")
+            .select("qualification_config")
+            .eq("enterprise_id", enterprise_id)
+            .single();
+
+        const prompt = `Evaluate the following lead data based on the qualification configuration:\n\nQualification Configuration: ${JSON.stringify(
+            qualificationData.qualification_config
+        )}\n\nLead Data: ${JSON.stringify(
+            leadFields
+        )}\n\nReply with QUALIFIED or UNQUALIFIED.`;
+
+        const response = await client.responses.create({
+            model: "gpt-4.1-nano",
+            instructions: "You are an expert lead evaluator. Reply with QUALIFIED or UNQUALIFIED only.",
+            input: prompt,
         });
 
-        if (!fieldResponse.ok) {
-            const errorDetails = await fieldResponse.text();
-            console.error("Error fetching selected fields data:", errorDetails);
-            res.status(fieldResponse.status).json({ error: "Error fetching selected fields data", details: errorDetails });
-            return; // Ensure no further code is executed
+        const evaluation = response?.output_text?.trim();
+        if (!evaluation || evaluation === "UNQUALIFIED") {
+            await supabase.from("enterprise_lead_details").insert({
+                enterprise_id,
+                custom_lead_data: leadFields,
+                assigned_to: null,
+                status: "UNQUALIFIED",
+            });
+            return res.status(200).json({ message: "Unqualified lead stored." });
         }
 
-        const fieldData = await fieldResponse.json();
-        console.log("Field data:", fieldData);
+        // Step 6: AE Assignment - Round Robin with AE ID
+        const { data: configData } = await supabase
+            .from("enterprise_assignment_config")
+            .select("config")
+            .eq("enterprise_id", enterprise_id)
+            .single();
 
-        // Insert the data into the lead_details table
-        const { error: insertError } = await supabase
-            .from("enterprise_lead_details")
-            .insert({
+        const ae_ids = configData.config.ae_ids;
+
+        const { data: tracker } = await supabase
+            .from("enterprise_ae_assignment_tracker")
+            .select("last_assigned_ae_id")
+            .eq("enterprise_id", enterprise_id)
+            .single();
+
+        const lastAssignedAeId = tracker?.last_assigned_ae_id;
+        let lastIndex = ae_ids.findIndex(id => id === lastAssignedAeId);
+        if (lastIndex === -1) lastIndex = -1;
+
+        const nextIndex = (lastIndex + 1) % ae_ids.length;
+        const assigned_ae_id = ae_ids[nextIndex];
+
+        await supabase
+            .from("enterprise_ae_assignment_tracker")
+            .upsert({
                 enterprise_id,
-                custom_lead_data: fieldData?.properties,
-                assigned_to: owner_id,
+                last_assigned_ae_id: assigned_ae_id,
+                updated_at: new Date().toISOString(),
             });
 
-        if (insertError) {
-            console.error("Error inserting lead details:", insertError.message);
-            res.status(500).json({ error: "Error inserting lead details", details: insertError.message });
-            return; // Ensure no further code is executed
-        }
+        // Step 7: Get AE Email
+        const { data: aeUser } = await supabase
+            .from("users_details")
+            .select("email")
+            .eq("user_id", assigned_ae_id)
+            .single();
 
-        console.log("Lead details inserted successfully");
-        res.status(200).json({ message: "Lead details processed successfully", lead });
+        // Step 8: Insert into DB and update HubSpot
+        await supabase.from("enterprise_lead_details").insert({
+            enterprise_id,
+            custom_lead_data: leadFields,
+            assigned_to: assigned_ae_id,
+            status: evaluation,
+        });
+
+        await axios.patch(
+            `https://api.hubapi.com/crm/v3/objects/contacts/${objectId}`,
+            {
+                properties: {
+                    hubspot_owner_id: assigned_ae_id,
+                },
+            },
+            {
+                headers: { Authorization: `Bearer ${process.env.HUBSPOT_API_KEY}` },
+            }
+        );
+
+
+        res.status(200).json({ message: "Lead processed, qualified and assigned." });
     } catch (error) {
-        console.error("Error processing webhook:", error);
-        res.status(500).json({ error: "Internal server error", details: error.message });
+        console.error("Error:", error);
+        res.status(500).json({ error: error.message });
     }
 };
 

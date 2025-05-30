@@ -32,7 +32,7 @@ const getCreatedLead = async (req, res) => {
         if (ownerError || ownerUser.length === 0) throw new Error("Owner not found in DB");
         const owner_id = ownerUser[0].user_id;
 
-        // Step 3: Fetch selected fields for enterprise
+        // Step 3: Fetch ƒfields for enterprise
         const { data: selectedFieldsData } = await supabase
             .from("enterprise_lead_config")
             .select("selected_fields")

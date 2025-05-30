@@ -96,6 +96,8 @@ const verifylead = async (data) => {
         });
 
         const owner = ownerResp.data?.results?.find(o => o.email === aeEmail);
+        console.log("Data checked");
+        
         if (!owner) throw new Error("HubSpot owner not found");
 
         const contactSearch = await axios.post(`https://api.hubapi.com/crm/v3/objects/contacts/search`, {
